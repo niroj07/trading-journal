@@ -1,4 +1,10 @@
-import React, { type ChangeEvent, useEffect, useMemo, useState } from 'react';
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 type AnnotationPoint = {
   x: number;
@@ -14,9 +20,10 @@ type Trade = {
   strategy: string;
   entry: string;
   exit: string;
+  lotSize: number;
+  rr: number;
   pnl: number;
   note: string;
-  image: string;
   beforeImage: string;
   afterImage: string;
   replayTitle: string;
@@ -38,7 +45,7 @@ type UserAccount = {
   password: string;
 };
 
-const STORAGE_KEY = 'trading-journal-full-pro-v1';
+const STORAGE_KEY = 'trading-journal-full-pro-auto-pnl-v1';
 
 const initialTrades: Trade[] = [
   {
@@ -48,10 +55,11 @@ const initialTrades: Trade[] = [
     side: 'Long',
     strategy: 'Breakout',
     entry: '84200',
-    exit: '84950',
+    exit: '84520',
+    lotSize: 1,
+    rr: 2.4,
     pnl: 320,
     note: 'Strong breakout above resistance with momentum confirmation.',
-    image: '',
     beforeImage: '',
     afterImage: '',
     replayTitle: 'BTC breakout replay',
@@ -75,10 +83,11 @@ const initialTrades: Trade[] = [
     side: 'Short',
     strategy: 'Reversal',
     entry: '2932',
-    exit: '2918',
+    exit: '2914',
+    lotSize: 10,
+    rr: 1.8,
     pnl: 180,
     note: 'Rejection from supply zone and bearish candle confirmation.',
-    image: '',
     beforeImage: '',
     afterImage: '',
     replayTitle: 'Gold reversal replay',
@@ -96,23 +105,24 @@ const initialTrades: Trade[] = [
   },
   {
     id: 3,
-    date: '2026-02-22',
+    date: '2026-02-18',
     pair: 'EURUSD',
     side: 'Long',
     strategy: 'Pullback',
     entry: '1.0832',
-    exit: '1.0810',
+    exit: '1.08225',
+    lotSize: 100000,
+    rr: 0.6,
     pnl: -95,
     note: 'Entered too early before full confirmation.',
-    image: '',
     beforeImage: '',
     afterImage: '',
-    replayTitle: 'EURUSD pullback replay',
-    replayPlan: 'Buy after clean pullback into support.',
-    replayOutcome: 'Entry was early and price continued lower first.',
-    replayLesson: 'Wait for better confirmation and avoid forcing the trade.',
+    replayTitle: 'EURUSD pullback review',
+    replayPlan: 'Wait for pullback confirmation before long entry.',
+    replayOutcome: 'Entry was early and invalidated quickly.',
+    replayLesson: 'Patience matters more than prediction.',
     aiSummary:
-      'Execution was weaker than the idea. Patience and confirmation were missing.',
+      'The setup concept was valid, but execution was early. Discipline and timing need work.',
     beforeAnnotations: [],
     afterAnnotations: [],
     tags: ['Forex'],
@@ -135,9 +145,9 @@ function monthKey(date: string) {
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(
-    value
-  );
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function safeDate(date: string) {
@@ -150,83 +160,39 @@ function calculateMaxDrawdown(trades: Trade[]) {
   let equity = 0;
   let peak = 0;
   let maxDrawdown = 0;
+
   for (const trade of sorted) {
     equity += trade.pnl;
-    if (equity > peak) peak = equity;
-    const drawdown = peak - equity;
-    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    peak = Math.max(peak, equity);
+    maxDrawdown = Math.max(maxDrawdown, peak - equity);
   }
+
   return maxDrawdown;
 }
 
-function buildEquityCurve(trades: Trade[]) {
-  let running = 0;
-  return [...trades]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((trade) => {
-      running += trade.pnl;
-      return { date: trade.date, value: running };
-    });
-}
+function calculatePnL(
+  entry: string,
+  exit: string,
+  lotSize: string,
+  side: 'Long' | 'Short'
+) {
+  const entryNum = Number(entry);
+  const exitNum = Number(exit);
+  const lotNum = Number(lotSize);
 
-function cardStyle(): React.CSSProperties {
-  return {
-    background:
-      'linear-gradient(180deg, rgba(30,41,59,0.88) 0%, rgba(15,23,42,0.95) 100%)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: '24px',
-    boxShadow: '0 16px 40px rgba(0,0,0,0.30)',
-    backdropFilter: 'blur(14px)',
-    transition:
-      'transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease',
-  };
-}
+  if (
+    !entry ||
+    !exit ||
+    !lotSize ||
+    Number.isNaN(entryNum) ||
+    Number.isNaN(exitNum) ||
+    Number.isNaN(lotNum)
+  ) {
+    return 0;
+  }
 
-function inputStyle(): React.CSSProperties {
-  return {
-    width: '100%',
-    padding: '12px 14px',
-    borderRadius: '14px',
-    border: '1px solid rgba(255,255,255,0.10)',
-    background: 'rgba(15,23,42,0.92)',
-    color: 'white',
-    outline: 'none',
-    boxSizing: 'border-box',
-  };
-}
-
-function buttonStyle(primary = true): React.CSSProperties {
-  return {
-    padding: '12px 18px',
-    borderRadius: '14px',
-    border: primary ? 'none' : '1px solid rgba(255,255,255,0.12)',
-    background: primary
-      ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 55%, #3b82f6 100%)'
-      : 'rgba(255,255,255,0.04)',
-    color: 'white',
-    cursor: 'pointer',
-    fontWeight: 800,
-    boxShadow: primary ? '0 10px 24px rgba(139,92,246,0.28)' : 'none',
-    transition: 'transform 140ms ease, opacity 140ms ease',
-  };
-}
-
-function chipStyle(bg: string, color = 'white'): React.CSSProperties {
-  return {
-    padding: '6px 10px',
-    borderRadius: '999px',
-    background: bg,
-    color,
-    fontSize: '12px',
-    fontWeight: 800,
-    display: 'inline-block',
-  };
-}
-
-function pnlColor(value: number) {
-  if (value > 0) return '#4ade80';
-  if (value < 0) return '#fb7185';
-  return '#cbd5e1';
+  const diff = side === 'Long' ? exitNum - entryNum : entryNum - exitNum;
+  return Number((diff * lotNum).toFixed(2));
 }
 
 function buildAiSummary(form: {
@@ -248,126 +214,123 @@ function buildAiSummary(form: {
   const resultText = pnl > 0 ? 'winning' : pnl < 0 ? 'losing' : 'breakeven';
   const annotationCount =
     form.beforeAnnotations.length + form.afterAnnotations.length;
-  const mistakeText = form.mistake
-    ? `Key mistake noted: ${form.mistake}. `
-    : '';
-  const qualityText = `Setup grade ${form.setupQuality}. `;
-  const planText = form.replayPlan
-    ? `Planned idea: ${form.replayPlan.trim()} `
-    : '';
-  const outcomeText = form.replayOutcome
-    ? `Outcome: ${form.replayOutcome.trim()} `
-    : '';
-  const lessonText = form.replayLesson
-    ? `Lesson: ${form.replayLesson.trim()} `
-    : '';
+  const mistakeText = form.mistake ? `Key mistake: ${form.mistake}. ` : '';
+
   return `${form.pair || 'Trade'} ${form.side.toLowerCase()} ${
     form.strategy || 'setup'
-  } review. ${qualityText}This was a ${resultText} trade with P&L ${formatNumber(
-    pnl
-  )}. Entry ${form.entry || '-'}, exit ${
-    form.exit || '-'
-  }. ${mistakeText}${planText}${outcomeText}${lessonText}Replay included ${annotationCount} chart annotation${
+  } review. Setup grade ${
+    form.setupQuality
+  }. This was a ${resultText} trade with P&L ${formatNumber(pnl)}. Entry ${
+    form.entry || '-'
+  }, exit ${form.exit || '-'}. ${mistakeText}${
+    form.replayPlan ? `Plan: ${form.replayPlan} ` : ''
+  }${form.replayOutcome ? `Outcome: ${form.replayOutcome} ` : ''}${
+    form.replayLesson ? `Lesson: ${form.replayLesson} ` : ''
+  }Replay used ${annotationCount} chart annotation${
     annotationCount === 1 ? '' : 's'
-  } across before and after screenshots.`.trim();
+  }.`.trim();
 }
 
-function MiniBar({
+function pnlColor(value: number) {
+  if (value > 0) return '#4ade80';
+  if (value < 0) return '#fb7185';
+  return '#cbd5e1';
+}
+
+function qualityGradient(value: 'A+' | 'A' | 'B' | 'C') {
+  if (value === 'A+') return 'linear-gradient(135deg,#22c55e,#3b82f6)';
+  if (value === 'A') return 'linear-gradient(135deg,#3b82f6,#8b5cf6)';
+  if (value === 'B') return 'linear-gradient(135deg,#f59e0b,#fb7185)';
+  return 'linear-gradient(135deg,#ef4444,#f97316)';
+}
+
+function appBackground(): CSSProperties {
+  return {
+    minHeight: '100vh',
+    background:
+      'radial-gradient(circle at top right, rgba(236,72,153,0.20), transparent 24%), radial-gradient(circle at top left, rgba(59,130,246,0.18), transparent 22%), radial-gradient(circle at bottom left, rgba(34,197,94,0.14), transparent 24%), linear-gradient(135deg, #020617 0%, #0f172a 45%, #111827 100%)',
+    color: 'white',
+    fontFamily: 'Arial, sans-serif',
+  };
+}
+
+function cardStyle(): CSSProperties {
+  return {
+    background:
+      'linear-gradient(180deg, rgba(30,41,59,0.88) 0%, rgba(15,23,42,0.94) 100%)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '24px',
+    boxShadow: '0 16px 40px rgba(0,0,0,0.30)',
+    backdropFilter: 'blur(14px)',
+  };
+}
+
+function inputStyle(): CSSProperties {
+  return {
+    width: '100%',
+    padding: '12px 14px',
+    borderRadius: '14px',
+    border: '1px solid rgba(255,255,255,0.10)',
+    background: 'rgba(15,23,42,0.92)',
+    color: 'white',
+    outline: 'none',
+    boxSizing: 'border-box',
+  };
+}
+
+function buttonStyle(primary = true): CSSProperties {
+  return {
+    padding: '12px 18px',
+    borderRadius: '14px',
+    border: primary ? 'none' : '1px solid rgba(255,255,255,0.12)',
+    background: primary
+      ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 55%, #3b82f6 100%)'
+      : 'rgba(255,255,255,0.04)',
+    color: 'white',
+    cursor: 'pointer',
+    fontWeight: 800,
+    boxShadow: primary ? '0 10px 24px rgba(139,92,246,0.28)' : 'none',
+    transition:
+      'transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease',
+  };
+}
+
+function chipStyle(bg: string, color = 'white'): CSSProperties {
+  return {
+    padding: '6px 10px',
+    borderRadius: '999px',
+    background: bg,
+    color,
+    fontSize: '12px',
+    fontWeight: 800,
+    display: 'inline-block',
+  };
+}
+
+function StatCard({
+  label,
   value,
-  max,
-  positive,
+  accent,
 }: {
-  value: number;
-  max: number;
-  positive: boolean;
+  label: string;
+  value: string;
+  accent: string;
 }) {
-  const width =
-    max === 0 ? 0 : Math.max(6, Math.min(100, (Math.abs(value) / max) * 100));
   return (
     <div
       style={{
-        height: 12,
-        background: 'rgba(255,255,255,0.08)',
-        borderRadius: 999,
-        overflow: 'hidden',
+        ...cardStyle(),
+        padding: '18px',
+        border: `1px solid ${accent}22`,
+        background:
+          'linear-gradient(180deg, rgba(30,41,59,0.98) 0%, rgba(17,24,39,0.95) 100%)',
       }}
     >
-      <div
-        style={{
-          width: `${width}%`,
-          height: '100%',
-          background: positive
-            ? 'linear-gradient(90deg, #22c55e, #60a5fa)'
-            : 'linear-gradient(90deg, #ef4444, #fb7185)',
-        }}
-      />
-    </div>
-  );
-}
-
-function EquityCurve({
-  points,
-}: {
-  points: { date: string; value: number }[];
-}) {
-  if (points.length === 0)
-    return <div style={{ color: '#94a3b8' }}>No data yet.</div>;
-  const values = points.map((p) => p.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const coords = points
-    .map((p, i) => {
-      const x = (i / Math.max(1, points.length - 1)) * 100;
-      const y = 100 - ((p.value - min) / range) * 100;
-      return `${x},${y}`;
-    })
-    .join(' ');
-
-  return (
-    <div>
-      <div
-        style={{
-          height: 240,
-          borderRadius: 18,
-          overflow: 'hidden',
-          background:
-            'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))',
-          border: '1px solid rgba(255,255,255,0.08)',
-          padding: 14,
-        }}
-      >
-        <svg
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          style={{ width: '100%', height: '100%' }}
-        >
-          <defs>
-            <linearGradient id="lineGradient" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0%" stopColor="#8b5cf6" />
-              <stop offset="50%" stopColor="#ec4899" />
-              <stop offset="100%" stopColor="#3b82f6" />
-            </linearGradient>
-          </defs>
-          <polyline
-            fill="none"
-            stroke="url(#lineGradient)"
-            strokeWidth="2.8"
-            points={coords}
-          />
-        </svg>
+      <div style={{ color: accent, fontSize: '13px', fontWeight: 800 }}>
+        {label}
       </div>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          color: '#94a3b8',
-          fontSize: 12,
-          marginTop: 8,
-        }}
-      >
-        <span>{points[0]?.date}</span>
-        <span>{points[points.length - 1]?.date}</span>
+      <div style={{ fontSize: '30px', fontWeight: 900, marginTop: '10px' }}>
+        {value}
       </div>
     </div>
   );
@@ -386,7 +349,7 @@ function AnnotationImage({
 }) {
   return (
     <div>
-      <div style={{ marginBottom: 8, color: '#93c5fd', fontWeight: 700 }}>
+      <div style={{ marginBottom: '8px', color: '#93c5fd', fontWeight: 700 }}>
         {title}
       </div>
       <div
@@ -402,14 +365,15 @@ function AnnotationImage({
         style={{
           position: 'relative',
           border: '1px solid rgba(255,255,255,0.10)',
-          borderRadius: 18,
+          borderRadius: '18px',
           overflow: 'hidden',
-          minHeight: 220,
+          minHeight: '220px',
           background: 'rgba(255,255,255,0.04)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           cursor: onAdd && src ? 'crosshair' : 'default',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
         }}
       >
         {src ? (
@@ -417,7 +381,7 @@ function AnnotationImage({
             <img
               src={src}
               alt={title}
-              style={{ width: '100%', maxHeight: 420, objectFit: 'cover' }}
+              style={{ width: '100%', maxHeight: '420px', objectFit: 'cover' }}
             />
             {annotations.map((point, index) => (
               <div
@@ -429,22 +393,23 @@ function AnnotationImage({
                   transform: 'translate(-50%, -50%)',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 6,
+                  gap: '6px',
                   pointerEvents: 'none',
                 }}
               >
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: 999,
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '999px',
                     background: 'linear-gradient(135deg, #8b5cf6, #ec4899)',
                     color: 'white',
-                    fontSize: 12,
+                    fontSize: '12px',
                     fontWeight: 800,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
                   }}
                 >
                   {index + 1}
@@ -455,10 +420,10 @@ function AnnotationImage({
                       background: 'rgba(2,6,23,0.88)',
                       color: '#f8fafc',
                       border: '1px solid rgba(255,255,255,0.12)',
-                      borderRadius: 10,
+                      borderRadius: '10px',
                       padding: '6px 8px',
-                      fontSize: 12,
-                      maxWidth: 180,
+                      fontSize: '12px',
+                      maxWidth: '180px',
                     }}
                   >
                     {point.text}
@@ -481,22 +446,24 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [activePage, setActivePage] = useState<
-    'dashboard' | 'add' | 'journal' | 'rules' | 'replay'
+    'dashboard' | 'journal' | 'replay' | 'rules'
   >('dashboard');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [editingTradeId, setEditingTradeId] = useState<number | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
   const [rulesText, setRulesText] = useState(
     '1. Only trade A or A+ setups.\n2. Never risk more than your defined plan.\n3. Avoid revenge trading.\n4. Wait for confirmation before entry.'
   );
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const [authForm, setAuthForm] = useState({
     name: '',
     email: '',
     password: '',
   });
+
   const [trades, setTrades] = useState<Trade[]>(initialTrades);
+
   const [search, setSearch] = useState('');
   const [monthFilter, setMonthFilter] = useState('All');
   const [sideFilter, setSideFilter] = useState('All');
@@ -513,9 +480,10 @@ export default function App() {
     strategy: '',
     entry: '',
     exit: '',
+    lotSize: '',
+    rr: '',
     pnl: '',
     note: '',
-    image: '',
     beforeImage: '',
     afterImage: '',
     replayTitle: '',
@@ -547,7 +515,9 @@ export default function App() {
         if (Array.isArray(parsed.trades)) setTrades(parsed.trades);
         if (typeof parsed.rulesText === 'string')
           setRulesText(parsed.rulesText);
-      } catch {}
+      } catch {
+        // ignore invalid storage
+      }
     }
     setLoaded(true);
   }, []);
@@ -556,9 +526,43 @@ export default function App() {
     if (!loaded) return;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ user, isLoggedIn, trades, rulesText })
+      JSON.stringify({
+        user,
+        isLoggedIn,
+        trades,
+        rulesText,
+      })
     );
   }, [user, isLoggedIn, trades, rulesText, loaded]);
+
+  useEffect(() => {
+    const autoPnL = calculatePnL(
+      form.entry,
+      form.exit,
+      form.lotSize,
+      form.side
+    );
+
+    if (form.entry && form.exit && form.lotSize) {
+      setForm((prev) =>
+        prev.pnl === String(autoPnL)
+          ? prev
+          : {
+              ...prev,
+              pnl: String(autoPnL),
+            }
+      );
+    } else {
+      setForm((prev) =>
+        prev.pnl === ''
+          ? prev
+          : {
+              ...prev,
+              pnl: '',
+            }
+      );
+    }
+  }, [form.entry, form.exit, form.lotSize, form.side]);
 
   const stats = useMemo(() => {
     const totalTrades = trades.length;
@@ -574,18 +578,27 @@ export default function App() {
     const profitFactor =
       grossLossAbs === 0 ? grossProfit : grossProfit / grossLossAbs;
     const averageWin = wins ? grossProfit / wins : 0;
+    const averageLoss = losingTrades.length
+      ? grossLossAbs / losingTrades.length
+      : 0;
+    const avgRR = totalTrades
+      ? trades.reduce((sum, t) => sum + (t.rr || 0), 0) / totalTrades
+      : 0;
     const maxDrawdown = calculateMaxDrawdown(trades);
     const replayCount = trades.filter(
       (t) => t.beforeImage || t.afterImage
     ).length;
     const bestTrade = [...trades].sort((a, b) => b.pnl - a.pnl)[0];
     const worstTrade = [...trades].sort((a, b) => a.pnl - b.pnl)[0];
+
     return {
       totalTrades,
       totalPnL,
       winRate,
       profitFactor,
       averageWin,
+      averageLoss,
+      avgRR,
       maxDrawdown,
       replayCount,
       bestTrade,
@@ -597,6 +610,7 @@ export default function App() {
     () => ['All', ...Array.from(new Set(trades.map((t) => monthKey(t.date))))],
     [trades]
   );
+
   const strategyOptions = useMemo(
     () => [
       'All',
@@ -604,11 +618,13 @@ export default function App() {
     ],
     [trades]
   );
+
   const monthlyData = useMemo(() => {
     const grouped: Record<
       string,
       { name: string; pnl: number; trades: number; wins: number }
     > = {};
+
     trades.forEach((trade) => {
       const key = monthKey(trade.date);
       if (!grouped[key])
@@ -617,6 +633,7 @@ export default function App() {
       grouped[key].trades += 1;
       if (trade.pnl > 0) grouped[key].wins += 1;
     });
+
     return Object.values(grouped).map((item) => ({
       ...item,
       winRate: item.trades
@@ -624,6 +641,7 @@ export default function App() {
         : 0,
     }));
   }, [trades]);
+
   const strategyData = useMemo(() => {
     const grouped: Record<string, number> = {};
     trades.forEach((trade) => {
@@ -634,6 +652,17 @@ export default function App() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
   }, [trades]);
+
+  const equityData = useMemo(() => {
+    let running = 0;
+    return [...trades]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((trade) => {
+        running += trade.pnl;
+        return { date: trade.date, equity: running };
+      });
+  }, [trades]);
+
   const replayTrades = useMemo(
     () =>
       trades
@@ -641,13 +670,9 @@ export default function App() {
         .sort((a, b) => b.date.localeCompare(a.date)),
     [trades]
   );
+
   const bestStrategy = strategyData[0]?.name || '-';
   const worstStrategy = strategyData[strategyData.length - 1]?.name || '-';
-  const equityPoints = useMemo(() => buildEquityCurve(trades), [trades]);
-  const biggestAbs = useMemo(
-    () => Math.max(1, ...strategyData.map((s) => Math.abs(s.value))),
-    [strategyData]
-  );
 
   const filteredTrades = useMemo(() => {
     let result = trades.filter((trade) => {
@@ -661,15 +686,18 @@ export default function App() {
         trade.replayTitle.toLowerCase().includes(q) ||
         trade.replayLesson.toLowerCase().includes(q) ||
         trade.aiSummary.toLowerCase().includes(q);
+
       const matchMonth =
         monthFilter === 'All' || monthKey(trade.date) === monthFilter;
       const matchSide = sideFilter === 'All' || trade.side === sideFilter;
       const matchStrategy =
         strategyFilter === 'All' || trade.strategy === strategyFilter;
       const matchFavorite = favoriteOnly ? trade.isFavorite : true;
+
       const tradeDate = safeDate(trade.date);
       const fromOk = !dateFrom || (tradeDate && trade.date >= dateFrom);
       const toOk = !dateTo || (tradeDate && trade.date <= dateTo);
+
       return (
         matchSearch &&
         matchMonth &&
@@ -680,6 +708,7 @@ export default function App() {
         toOk
       );
     });
+
     result = [...result].sort((a, b) => {
       if (sortBy === 'Newest') return b.date.localeCompare(a.date);
       if (sortBy === 'Oldest') return a.date.localeCompare(b.date);
@@ -688,6 +717,7 @@ export default function App() {
       if (sortBy === 'Pair A-Z') return a.pair.localeCompare(b.pair);
       return 0;
     });
+
     return result;
   }, [
     trades,
@@ -703,20 +733,25 @@ export default function App() {
 
   const handleAuth = () => {
     if (!authForm.email || !authForm.password) return;
+
     if (authMode === 'signup') {
-      setUser({
+      const newUser: UserAccount = {
         name: authForm.name || 'Trader',
         email: authForm.email,
         password: authForm.password,
-      });
+      };
+      setUser(newUser);
       setIsLoggedIn(true);
       setAuthForm({ name: '', email: '', password: '' });
       return;
     }
+
     if (authForm.email === user.email && authForm.password === user.password) {
       setIsLoggedIn(true);
       setAuthForm({ name: '', email: '', password: '' });
-    } else alert('Invalid email or password');
+    } else {
+      alert('Invalid email or password');
+    }
   };
 
   const handleLogout = () => setIsLoggedIn(false);
@@ -729,9 +764,10 @@ export default function App() {
       strategy: '',
       entry: '',
       exit: '',
+      lotSize: '',
+      rr: '',
       pnl: '',
       note: '',
-      image: '',
       beforeImage: '',
       afterImage: '',
       replayTitle: '',
@@ -750,7 +786,7 @@ export default function App() {
   };
 
   const handleImageUpload =
-    (field: 'image' | 'beforeImage' | 'afterImage') =>
+    (field: 'beforeImage' | 'afterImage') =>
     (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -781,8 +817,12 @@ export default function App() {
     }));
   };
 
-  const generateAiSummary = () =>
-    setForm((prev) => ({ ...prev, aiSummary: buildAiSummary(prev) }));
+  const generateAiSummary = () => {
+    setForm((prev) => ({
+      ...prev,
+      aiSummary: buildAiSummary(prev),
+    }));
+  };
 
   const addAnnotation = (
     target: 'beforeAnnotations' | 'afterAnnotations',
@@ -808,10 +848,18 @@ export default function App() {
   };
 
   const saveTrade = () => {
-    if (!form.date || !form.pair || !form.strategy || !form.pnl) {
-      alert('Please fill date, pair, strategy, and P&L');
+    if (
+      !form.date ||
+      !form.pair ||
+      !form.strategy ||
+      !form.entry ||
+      !form.exit ||
+      !form.lotSize
+    ) {
+      alert('Please fill date, pair, strategy, entry, exit, and lot size');
       return;
     }
+
     const preparedTrade: Trade = {
       id: editingTradeId ?? Date.now(),
       date: form.date,
@@ -820,9 +868,10 @@ export default function App() {
       strategy: form.strategy,
       entry: form.entry,
       exit: form.exit,
-      pnl: Number(form.pnl),
+      lotSize: Number(form.lotSize || 0),
+      rr: Number(form.rr || 0),
+      pnl: calculatePnL(form.entry, form.exit, form.lotSize, form.side),
       note: form.note,
-      image: form.image,
       beforeImage: form.beforeImage,
       afterImage: form.afterImage,
       replayTitle: form.replayTitle,
@@ -840,11 +889,15 @@ export default function App() {
       mistake: form.mistake,
       isFavorite: form.isFavorite,
     };
-    if (editingTradeId)
+
+    if (editingTradeId) {
       setTrades((prev) =>
         prev.map((t) => (t.id === editingTradeId ? preparedTrade : t))
       );
-    else setTrades((prev) => [preparedTrade, ...prev]);
+    } else {
+      setTrades((prev) => [preparedTrade, ...prev]);
+    }
+
     resetForm();
     setShowAddModal(false);
     setActivePage('journal');
@@ -859,9 +912,10 @@ export default function App() {
       strategy: trade.strategy,
       entry: trade.entry,
       exit: trade.exit,
+      lotSize: String(trade.lotSize ?? ''),
+      rr: String(trade.rr || 0),
       pnl: String(trade.pnl),
       note: trade.note,
-      image: trade.image,
       beforeImage: trade.beforeImage,
       afterImage: trade.afterImage,
       replayTitle: trade.replayTitle,
@@ -877,7 +931,6 @@ export default function App() {
       isFavorite: trade.isFavorite,
     });
     setShowAddModal(true);
-    setActivePage('add');
   };
 
   const duplicateTrade = (trade: Trade) => {
@@ -889,9 +942,10 @@ export default function App() {
       strategy: trade.strategy,
       entry: trade.entry,
       exit: trade.exit,
+      lotSize: String(trade.lotSize ?? ''),
+      rr: String(trade.rr || 0),
       pnl: String(trade.pnl),
       note: trade.note,
-      image: trade.image,
       beforeImage: trade.beforeImage,
       afterImage: trade.afterImage,
       replayTitle: trade.replayTitle,
@@ -907,7 +961,6 @@ export default function App() {
       isFavorite: trade.isFavorite,
     });
     setShowAddModal(true);
-    setActivePage('add');
   };
 
   const confirmDeleteTrade = () => {
@@ -916,10 +969,11 @@ export default function App() {
     setDeleteTargetId(null);
   };
 
-  const toggleFavorite = (id: number) =>
+  const toggleFavorite = (id: number) => {
     setTrades((prev) =>
       prev.map((t) => (t.id === id ? { ...t, isFavorite: !t.isFavorite } : t))
     );
+  };
 
   const exportToCSV = () => {
     const headers = [
@@ -929,7 +983,9 @@ export default function App() {
       'Strategy',
       'Entry',
       'Exit',
+      'LotSize',
       'PnL',
+      'RR',
       'ReplayTitle',
       'AI Summary',
       'SetupQuality',
@@ -938,6 +994,7 @@ export default function App() {
       'Tags',
       'Note',
     ];
+
     const rows = trades.map((trade) => [
       trade.date,
       trade.pair,
@@ -945,7 +1002,9 @@ export default function App() {
       trade.strategy,
       trade.entry,
       trade.exit,
+      trade.lotSize,
       trade.pnl,
+      trade.rr,
       trade.replayTitle,
       trade.aiSummary,
       trade.setupQuality,
@@ -954,6 +1013,7 @@ export default function App() {
       trade.tags.join('|'),
       trade.note.replace(/\n/g, ' '),
     ]);
+
     const csv = [headers, ...rows]
       .map((row) =>
         row
@@ -961,6 +1021,7 @@ export default function App() {
           .join(',')
       )
       .join('\n');
+
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -970,57 +1031,27 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const renderSidebarButton = (
-    key: 'dashboard' | 'add' | 'journal' | 'rules' | 'replay',
-    label: string
-  ) => (
-    <button
-      onClick={() => {
-        setActivePage(key);
-        setIsMobileMenuOpen(false);
-        if (key === 'add') setShowAddModal(true);
-      }}
-      style={{
-        width: '100%',
-        textAlign: 'left',
-        padding: '14px 16px',
-        borderRadius: '16px',
-        border: '1px solid rgba(255,255,255,0.10)',
-        background:
-          activePage === key
-            ? 'linear-gradient(135deg, rgba(139,92,246,0.45), rgba(236,72,153,0.24), rgba(59,130,246,0.18))'
-            : 'rgba(255,255,255,0.04)',
-        color: 'white',
-        cursor: 'pointer',
-        fontWeight: 800,
-      }}
-    >
-      {label}
-    </button>
-  );
+  const mobile =
+    typeof window !== 'undefined' ? window.innerWidth < 1024 : false;
 
   if (!isLoggedIn) {
     return (
       <div
         style={{
-          minHeight: '100vh',
-          background:
-            'radial-gradient(circle at top right, rgba(236,72,153,0.22), transparent 24%), radial-gradient(circle at top left, rgba(59,130,246,0.18), transparent 22%), radial-gradient(circle at bottom left, rgba(34,197,94,0.14), transparent 24%), linear-gradient(135deg, #020617 0%, #0f172a 45%, #111827 100%)',
-          color: 'white',
-          fontFamily: 'Arial, sans-serif',
+          ...appBackground(),
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: 24,
+          padding: '24px',
         }}
       >
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.2fr 0.8fr',
-            gap: 24,
+            gridTemplateColumns: mobile ? '1fr' : '1.2fr 0.8fr',
+            gap: '24px',
             width: '100%',
-            maxWidth: 1200,
+            maxWidth: '1200px',
           }}
         >
           <div style={{ alignSelf: 'center' }}>
@@ -1030,11 +1061,11 @@ export default function App() {
                 '#f5d0fe'
               )}
             >
-              Full Pro Upgrade
+              Full Pro Upgrade + Auto P&L
             </div>
             <h1
               style={{
-                fontSize: 58,
+                fontSize: mobile ? '42px' : '58px',
                 margin: '18px 0 16px 0',
                 lineHeight: 1.04,
                 background:
@@ -1043,27 +1074,35 @@ export default function App() {
                 WebkitTextFillColor: 'transparent',
               }}
             >
-              Mobile responsive, premium, colorful, and analytics-ready.
+              A colorful, mobile-friendly, analytics-rich trading journal.
             </h1>
-            <p style={{ color: '#dbeafe', fontSize: 18, maxWidth: 760 }}>
-              {' '}
-              Pro Trading Journal with replay review, annotations, AI-style
-              summary, mobile menu, equity curve, analytics cards, and a
-              polished SaaS-style UI by @Mr.Niroj
+            <p
+              style={{
+                color: '#dbeafe',
+                fontSize: '18px',
+                maxWidth: '760px',
+              }}
+            >
+              Track trades, auto-calculate P&L from entry, exit, side and lot
+              size, compare before/after screenshots, annotate charts, review AI
+              summaries, and manage everything in a premium TradingView-inspired
+              layout by @Mr.Niroj
             </p>
           </div>
-          <div style={{ ...cardStyle(), padding: 28, alignSelf: 'center' }}>
-            <h2 style={{ marginTop: 0, fontSize: 30, color: '#f5d0fe' }}>
+
+          <div style={{ ...cardStyle(), padding: '28px' }}>
+            <h2 style={{ marginTop: 0, fontSize: '30px', color: '#f5d0fe' }}>
               {authMode === 'login' ? 'Welcome back' : 'Create account'}
             </h2>
-            <p style={{ color: '#cbd5e1', marginBottom: 18 }}>
+            <p style={{ color: '#cbd5e1', marginBottom: '18px' }}>
               {authMode === 'login'
                 ? 'Use the demo login or your own signup details.'
                 : 'Create your journal account.'}
             </p>
+
             {authMode === 'signup' && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ marginBottom: 8, color: '#cbd5e1' }}>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ marginBottom: '8px', color: '#cbd5e1' }}>
                   Full Name
                 </div>
                 <input
@@ -1076,8 +1115,9 @@ export default function App() {
                 />
               </div>
             )}
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ marginBottom: 8, color: '#cbd5e1' }}>Email</div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ marginBottom: '8px', color: '#cbd5e1' }}>Email</div>
               <input
                 style={inputStyle()}
                 value={authForm.email}
@@ -1087,8 +1127,11 @@ export default function App() {
                 placeholder="name@email.com"
               />
             </div>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ marginBottom: 8, color: '#cbd5e1' }}>Password</div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ marginBottom: '8px', color: '#cbd5e1' }}>
+                Password
+              </div>
               <input
                 type="password"
                 style={inputStyle()}
@@ -1099,6 +1142,7 @@ export default function App() {
                 placeholder="Enter password"
               />
             </div>
+
             <button
               style={{ ...buttonStyle(true), width: '100%' }}
               onClick={handleAuth}
@@ -1107,7 +1151,11 @@ export default function App() {
             </button>
 
             <button
-              style={{ ...buttonStyle(false), width: '100%', marginTop: 14 }}
+              style={{
+                ...buttonStyle(false),
+                width: '100%',
+                marginTop: '14px',
+              }}
               onClick={() =>
                 setAuthMode((prev) => (prev === 'login' ? 'signup' : 'login'))
               }
@@ -1123,127 +1171,179 @@ export default function App() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background:
-          'radial-gradient(circle at top right, rgba(236,72,153,0.18), transparent 24%), radial-gradient(circle at top left, rgba(59,130,246,0.16), transparent 22%), radial-gradient(circle at bottom left, rgba(34,197,94,0.14), transparent 24%), linear-gradient(135deg, #020617 0%, #0f172a 45%, #111827 100%)',
-        color: 'white',
-        fontFamily: 'Arial, sans-serif',
-        padding: 18,
-      }}
-    >
-      <div style={{ maxWidth: 1500, margin: '0 auto' }}>
-        <div
-          style={{
-            ...cardStyle(),
-            padding: 14,
-            marginBottom: 18,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div
-            style={{
-              fontSize: 26,
-              fontWeight: 900,
-              background: 'linear-gradient(135deg, #c084fc, #f472b6, #60a5fa)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}
-          >
-            Trading Journal Pro
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              gap: 10,
-              alignItems: 'center',
-              flexWrap: 'wrap',
-            }}
-          >
-            <span style={{ color: '#93c5fd', fontSize: 14 }}>{user.name}</span>
-            <button
-              style={buttonStyle(false)}
-              onClick={() => setIsMobileMenuOpen((v) => !v)}
-            >
-              Menu
-            </button>
-            <button
-              style={buttonStyle(true)}
-              onClick={() => setShowAddModal(true)}
-            >
-              + New Trade
-            </button>
-          </div>
-        </div>
-
-        <div
-          style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 20 }}
-        >
+    <div style={{ ...appBackground(), padding: '18px' }}>
+      <div style={{ maxWidth: '1500px', margin: '0 auto' }}>
+        {mobile ? (
           <div
             style={{
               ...cardStyle(),
-              padding: 18,
-              height: 'fit-content',
-              position: 'sticky',
-              top: 18,
+              padding: '14px',
+              marginBottom: '18px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '12px',
             }}
           >
-            <div style={{ color: '#93c5fd', fontSize: 14, marginBottom: 16 }}>
-              {user.email}
-            </div>
-            {(isMobileMenuOpen || true) && (
-              <div style={{ display: 'grid', gap: 10 }}>
-                {renderSidebarButton('dashboard', 'Dashboard')}
-                {renderSidebarButton('journal', 'Trade Journal')}
-                {renderSidebarButton('replay', 'Trade Replay')}
-                {renderSidebarButton('add', 'Add Trade')}
-                {renderSidebarButton('rules', 'Trading Rules')}
-              </div>
-            )}
             <div
               style={{
-                marginTop: 18,
-                padding: 14,
-                borderRadius: 18,
+                fontSize: '24px',
+                fontWeight: 900,
                 background:
-                  'linear-gradient(135deg, rgba(139,92,246,0.18), rgba(236,72,153,0.12), rgba(59,130,246,0.12))',
+                  'linear-gradient(135deg, #c084fc, #f472b6, #60a5fa)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
               }}
             >
-              <div style={{ color: '#d8b4fe', fontSize: 12, fontWeight: 700 }}>
-                Replay entries
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 900, marginTop: 6 }}>
-                {stats.replayCount}
-              </div>
+              Trading Journal
             </div>
-            <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
-              <button style={buttonStyle(false)} onClick={exportToCSV}>
-                Export CSV
-              </button>
-              <button style={buttonStyle(false)} onClick={handleLogout}>
-                Logout
-              </button>
-            </div>
+            <button
+              style={buttonStyle(false)}
+              onClick={() => setShowMobileMenu((v) => !v)}
+            >
+              {showMobileMenu ? 'Close' : 'Menu'}
+            </button>
           </div>
+        ) : null}
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: mobile ? '1fr' : '260px 1fr',
+            gap: '20px',
+          }}
+        >
+          {(!mobile || showMobileMenu) && (
+            <div
+              style={{
+                ...cardStyle(),
+                padding: '18px',
+                height: 'fit-content',
+                position: mobile ? 'relative' : 'sticky',
+                top: 18,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '28px',
+                  fontWeight: 900,
+                  marginBottom: '8px',
+                  background:
+                    'linear-gradient(135deg, #c084fc, #f472b6, #60a5fa)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                Trading Journal
+              </div>
+
+              <div
+                style={{
+                  color: '#93c5fd',
+                  fontSize: '14px',
+                  marginBottom: '20px',
+                }}
+              >
+                {user.name} • {user.email}
+              </div>
+
+              <div style={{ display: 'grid', gap: '10px' }}>
+                {[
+                  ['dashboard', 'Dashboard'],
+                  ['journal', 'Trade Journal'],
+                  ['replay', 'Trade Replay'],
+                  ['rules', 'Trading Rules'],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      setActivePage(
+                        key as 'dashboard' | 'journal' | 'replay' | 'rules'
+                      );
+                      setShowMobileMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '14px 16px',
+                      borderRadius: '16px',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      background:
+                        activePage === key
+                          ? 'linear-gradient(135deg, rgba(139,92,246,0.45), rgba(236,72,153,0.24), rgba(59,130,246,0.18))'
+                          : 'rgba(255,255,255,0.04)',
+                      color: 'white',
+                      cursor: 'pointer',
+                      fontWeight: 800,
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  marginTop: '18px',
+                  padding: '14px',
+                  borderRadius: '18px',
+                  background:
+                    'linear-gradient(135deg, rgba(139,92,246,0.18), rgba(236,72,153,0.12), rgba(59,130,246,0.12))',
+                }}
+              >
+                <div
+                  style={{
+                    color: '#d8b4fe',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                  }}
+                >
+                  Replay entries
+                </div>
+                <div
+                  style={{
+                    fontSize: '32px',
+                    fontWeight: 900,
+                    marginTop: '6px',
+                  }}
+                >
+                  {stats.replayCount}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: '10px', marginTop: '16px' }}>
+                <button
+                  style={buttonStyle(true)}
+                  onClick={() => {
+                    setShowAddModal(true);
+                    setShowMobileMenu(false);
+                  }}
+                >
+                  + New Trade
+                </button>
+                <button style={buttonStyle(false)} onClick={exportToCSV}>
+                  Export CSV
+                </button>
+                <button style={buttonStyle(false)} onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
+            </div>
+          )}
 
           <div>
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1.4fr 0.9fr',
-                gap: 18,
-                marginBottom: 18,
+                gridTemplateColumns: mobile ? '1fr' : '1.4fr 0.9fr',
+                gap: '18px',
+                marginBottom: '18px',
               }}
             >
               <div
                 style={{
                   ...cardStyle(),
-                  padding: 24,
+                  padding: '24px',
                   position: 'relative',
                   overflow: 'hidden',
                 }}
@@ -1267,36 +1367,41 @@ export default function App() {
                   </div>
                   <h1
                     style={{
-                      fontSize: 30,
-                      margin: '14px 0 10px 0',
+                      fontSize: mobile ? '28px' : '34px',
+                      margin: '10px 0 8px 0',
                       background:
                         'linear-gradient(135deg, #e9d5ff, #f9a8d4, #93c5fd)',
                       WebkitBackgroundClip: 'text',
                       WebkitTextFillColor: 'transparent',
                     }}
                   >
-                    Colorful Trading Dashboard
+                    Trading Journal Pro
                   </h1>
-                  <p style={{ color: '#dbeafe', margin: 0 }}>
-                    Mobile-friendly layout, premium gradients, replay workflow,
-                    AI summary, equity curve, and analytics widgets in one
-                    journal.
+                  <p style={{ color: '#dbeafe', margin: 0,
+                        fontSize: mobile ? "14px" : "16px",
+                        lineHeight: 1.45, }}>
+                    Mobile responsive layout, premium visual design, replay
+                    comparisons, analytics cards, equity curve, and auto P&L
+                    from entry, exit, side, and lot size.
                   </p>
                 </div>
               </div>
-              <div style={{ ...cardStyle(), padding: 24 }}>
+
+              <div style={{ ...cardStyle(), padding: '24px' }}>
                 <div
                   style={{
                     color: '#93c5fd',
-                    fontSize: 13,
+                    fontSize: '13px',
                     fontWeight: 800,
                     letterSpacing: '0.04em',
                     textTransform: 'uppercase',
                   }}
                 >
-                  Highlights
+                  Quick summary
                 </div>
-                <div style={{ marginTop: 14, display: 'grid', gap: 10 }}>
+                <div
+                  style={{ marginTop: '14px', display: 'grid', gap: '10px' }}
+                >
                   <div>
                     Best strategy:{' '}
                     <strong style={{ color: '#f5d0fe' }}>{bestStrategy}</strong>
@@ -1311,9 +1416,9 @@ export default function App() {
                     Best trade:{' '}
                     <strong style={{ color: '#86efac' }}>
                       {stats.bestTrade
-                        ? `${stats.bestTrade.pair} ${formatNumber(
+                        ? `${stats.bestTrade.pair} (${formatNumber(
                             stats.bestTrade.pnl
-                          )}`
+                          )})`
                         : '-'}
                     </strong>
                   </div>
@@ -1321,9 +1426,9 @@ export default function App() {
                     Worst trade:{' '}
                     <strong style={{ color: '#fda4af' }}>
                       {stats.worstTrade
-                        ? `${stats.worstTrade.pair} ${formatNumber(
+                        ? `${stats.worstTrade.pair} (${formatNumber(
                             stats.worstTrade.pnl
-                          )}`
+                          )})`
                         : '-'}
                     </strong>
                   </div>
@@ -1334,45 +1439,43 @@ export default function App() {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
-                gap: 14,
-                marginBottom: 18,
+                gridTemplateColumns: mobile
+                  ? '1fr 1fr'
+                  : 'repeat(6, minmax(0, 1fr))',
+                gap: '14px',
+                marginBottom: '18px',
               }}
             >
-              {[
-                ['Total Trades', String(stats.totalTrades), '#c084fc'],
-                ['Replay Trades', String(stats.replayCount), '#f472b6'],
-                ['Win Rate', `${stats.winRate.toFixed(1)}%`, '#60a5fa'],
-                [
-                  'Total P&L',
-                  formatNumber(stats.totalPnL),
-                  stats.totalPnL >= 0 ? '#4ade80' : '#fb7185',
-                ],
-                ['Avg Win', formatNumber(stats.averageWin), '#fbbf24'],
-                ['Max Drawdown', formatNumber(stats.maxDrawdown), '#fb7185'],
-              ].map(([label, value, accent]) => (
-                <div
-                  key={label}
-                  style={{
-                    ...cardStyle(),
-                    padding: 18,
-                    border: `1px solid ${accent}22`,
-                  }}
-                >
-                  <div
-                    style={{
-                      color: accent as string,
-                      fontSize: 13,
-                      fontWeight: 800,
-                    }}
-                  >
-                    {label}
-                  </div>
-                  <div style={{ fontSize: 30, fontWeight: 900, marginTop: 10 }}>
-                    {value}
-                  </div>
-                </div>
-              ))}
+              <StatCard
+                label="Total Trades"
+                value={String(stats.totalTrades)}
+                accent="#c084fc"
+              />
+              <StatCard
+                label="Replay Trades"
+                value={String(stats.replayCount)}
+                accent="#f472b6"
+              />
+              <StatCard
+                label="Win Rate"
+                value={`${stats.winRate.toFixed(1)}%`}
+                accent="#60a5fa"
+              />
+              <StatCard
+                label="Total P&L"
+                value={formatNumber(stats.totalPnL)}
+                accent="#4ade80"
+              />
+              <StatCard
+                label="Avg Win"
+                value={formatNumber(stats.averageWin)}
+                accent="#fbbf24"
+              />
+              <StatCard
+                label="Avg R:R"
+                value={formatNumber(stats.avgRR)}
+                accent="#fb7185"
+              />
             </div>
 
             {activePage === 'dashboard' && (
@@ -1380,29 +1483,23 @@ export default function App() {
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '1.15fr 0.85fr',
-                    gap: 18,
-                    marginBottom: 18,
+                    gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                    gap: '18px',
+                    marginBottom: '18px',
                   }}
                 >
-                  <div style={{ ...cardStyle(), padding: 20 }}>
-                    <h2 style={{ marginTop: 0, color: '#93c5fd' }}>
-                      Equity Curve
-                    </h2>
-                    <EquityCurve points={equityPoints} />
-                  </div>
-                  <div style={{ ...cardStyle(), padding: 20 }}>
+                  <div style={{ ...cardStyle(), padding: '20px' }}>
                     <h2 style={{ marginTop: 0, color: '#f9a8d4' }}>
                       Monthly Performance
                     </h2>
-                    <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'grid', gap: '12px' }}>
                       {monthlyData.map((month) => (
                         <div
                           key={month.name}
                           style={{
                             border: '1px solid rgba(255,255,255,0.08)',
-                            borderRadius: 18,
-                            padding: 14,
+                            borderRadius: '18px',
+                            padding: '14px',
                             background:
                               'linear-gradient(135deg, rgba(255,255,255,0.04), rgba(139,92,246,0.05))',
                           }}
@@ -1411,8 +1508,8 @@ export default function App() {
                             style={{
                               display: 'flex',
                               justifyContent: 'space-between',
-                              gap: 12,
-                              marginBottom: 8,
+                              gap: '12px',
+                              marginBottom: '8px',
                             }}
                           >
                             <strong>{month.name}</strong>
@@ -1425,46 +1522,57 @@ export default function App() {
                               {formatNumber(month.pnl)}
                             </span>
                           </div>
-                          <div style={{ color: '#cbd5e1', fontSize: 14 }}>
+                          <div style={{ color: '#cbd5e1', fontSize: '14px' }}>
                             Trades: {month.trades} • Win rate: {month.winRate}%
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                </div>
 
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 18,
-                  }}
-                >
-                  <div style={{ ...cardStyle(), padding: 20 }}>
-                    <h2 style={{ marginTop: 0, color: '#fcd34d' }}>
+                  <div style={{ ...cardStyle(), padding: '20px' }}>
+                    <h2 style={{ marginTop: 0, color: '#93c5fd' }}>
                       Strategy Performance
                     </h2>
-                    <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'grid', gap: '12px' }}>
                       {strategyData.map((item) => (
                         <div
                           key={item.name}
                           style={{
                             display: 'grid',
-                            gridTemplateColumns: '180px 1fr 110px',
+                            gridTemplateColumns: mobile
+                              ? '1fr'
+                              : '180px 1fr 110px',
                             alignItems: 'center',
-                            gap: 12,
+                            gap: '12px',
                           }}
                         >
                           <div>{item.name}</div>
-                          <MiniBar
-                            value={item.value}
-                            max={biggestAbs}
-                            positive={item.value >= 0}
-                          />
                           <div
                             style={{
-                              textAlign: 'right',
+                              height: '12px',
+                              background: 'rgba(255,255,255,0.08)',
+                              borderRadius: '999px',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  Math.abs(item.value)
+                                )}%`,
+                                height: '100%',
+                                background:
+                                  item.value >= 0
+                                    ? 'linear-gradient(90deg, #22c55e, #60a5fa)'
+                                    : 'linear-gradient(90deg, #ef4444, #f97316)',
+                              }}
+                            />
+                          </div>
+                          <div
+                            style={{
+                              textAlign: mobile ? 'left' : 'right',
                               color: pnlColor(item.value),
                               fontWeight: 800,
                             }}
@@ -1475,83 +1583,94 @@ export default function App() {
                       ))}
                     </div>
                   </div>
-                  <div style={{ ...cardStyle(), padding: 20 }}>
-                    <h2 style={{ marginTop: 0, color: '#86efac' }}>
-                      Best & Worst Trades
-                    </h2>
-                    <div style={{ display: 'grid', gap: 14 }}>
-                      <div
-                        style={{
-                          borderRadius: 18,
-                          padding: 16,
-                          background:
-                            'linear-gradient(135deg, rgba(34,197,94,0.14), rgba(59,130,246,0.10))',
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: '#86efac',
-                            fontWeight: 800,
-                            marginBottom: 8,
-                          }}
-                        >
-                          Best Trade
-                        </div>
-                        <div>
-                          {stats.bestTrade
-                            ? `${stats.bestTrade.pair} • ${stats.bestTrade.strategy}`
-                            : '-'}
-                        </div>
-                        <div style={{ marginTop: 6, color: '#bbf7d0' }}>
-                          {stats.bestTrade
-                            ? formatNumber(stats.bestTrade.pnl)
-                            : '-'}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          borderRadius: 18,
-                          padding: 16,
-                          background:
-                            'linear-gradient(135deg, rgba(239,68,68,0.14), rgba(236,72,153,0.10))',
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: '#fda4af',
-                            fontWeight: 800,
-                            marginBottom: 8,
-                          }}
-                        >
-                          Worst Trade
-                        </div>
-                        <div>
-                          {stats.worstTrade
-                            ? `${stats.worstTrade.pair} • ${stats.worstTrade.strategy}`
-                            : '-'}
-                        </div>
-                        <div style={{ marginTop: 6, color: '#fecaca' }}>
-                          {stats.worstTrade
-                            ? formatNumber(stats.worstTrade.pnl)
-                            : '-'}
-                        </div>
-                      </div>
-                    </div>
+                </div>
+
+                <div
+                  style={{
+                    ...cardStyle(),
+                    padding: '20px',
+                    marginBottom: '18px',
+                  }}
+                >
+                  <h2 style={{ marginTop: 0, color: '#fcd34d' }}>
+                    Equity Curve
+                  </h2>
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {equityData.length === 0 ? (
+                      <div style={{ color: '#94a3b8' }}>No trades yet.</div>
+                    ) : (
+                      equityData.map((item, index) => {
+                        const totalAbs = Math.max(
+                          1,
+                          Math.abs(equityData[equityData.length - 1].equity)
+                        );
+
+                        return (
+                          <div
+                            key={`${item.date}-${index}`}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: mobile
+                                ? '1fr'
+                                : '120px 1fr 120px',
+                              gap: '12px',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <div style={{ color: '#cbd5e1' }}>{item.date}</div>
+                            <div
+                              style={{
+                                height: '12px',
+                                background: 'rgba(255,255,255,0.08)',
+                                borderRadius: '999px',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(
+                                    100,
+                                    Math.max(
+                                      8,
+                                      (Math.abs(item.equity) / totalAbs) * 100
+                                    )
+                                  )}%`,
+                                  height: '100%',
+                                  background:
+                                    item.equity >= 0
+                                      ? 'linear-gradient(90deg, #8b5cf6, #22c55e)'
+                                      : 'linear-gradient(90deg, #ef4444, #f97316)',
+                                }}
+                              />
+                            </div>
+                            <div
+                              style={{
+                                color: item.equity >= 0 ? '#86efac' : '#fda4af',
+                                fontWeight: 800,
+                                textAlign: mobile ? 'left' : 'right',
+                              }}
+                            >
+                              {formatNumber(item.equity)}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               </>
             )}
 
             {activePage === 'replay' && (
-              <div style={{ ...cardStyle(), padding: 20 }}>
+              <div style={{ ...cardStyle(), padding: '20px' }}>
                 <div
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    gap: 12,
+                    gap: '12px',
                     flexWrap: 'wrap',
-                    marginBottom: 18,
+                    marginBottom: '18px',
                   }}
                 >
                   <div>
@@ -1559,187 +1678,204 @@ export default function App() {
                       Trade Replay
                     </h2>
                     <p style={{ color: '#cbd5e1', marginBottom: 0 }}>
-                      Compare screenshots, view chart annotations, and read the
-                      AI-style summary.
+                      Compare screenshots, annotations, plan, outcome, and AI
+                      summary.
                     </p>
                   </div>
                   <button
                     style={buttonStyle(true)}
-                    onClick={() => {
-                      resetForm();
-                      setShowAddModal(true);
-                      setActivePage('add');
-                    }}
+                    onClick={() => setShowAddModal(true)}
                   >
                     + New Replay Trade
                   </button>
                 </div>
-                <div style={{ display: 'grid', gap: 18 }}>
-                  {replayTrades.map((trade) => (
-                    <div
-                      key={trade.id}
-                      style={{
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: 20,
-                        background:
-                          'linear-gradient(180deg, rgba(2,6,23,0.80), rgba(15,23,42,0.75))',
-                        padding: 18,
-                      }}
-                    >
+
+                {replayTrades.length === 0 ? (
+                  <div
+                    style={{
+                      padding: '28px',
+                      textAlign: 'center',
+                      color: '#cbd5e1',
+                      border: '1px dashed rgba(255,255,255,0.18)',
+                      borderRadius: '18px',
+                    }}
+                  >
+                    No replay trades yet.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '18px' }}>
+                    {replayTrades.map((trade) => (
                       <div
+                        key={trade.id}
                         style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          flexWrap: 'wrap',
-                          gap: 10,
-                          marginBottom: 14,
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontSize: 22, fontWeight: 900 }}>
-                            {trade.replayTitle || `${trade.pair} replay`}
-                          </div>
-                          <div style={{ color: '#cbd5e1', marginTop: 4 }}>
-                            {trade.pair} • {trade.side} • {trade.strategy} •{' '}
-                            {trade.date}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            color: pnlColor(trade.pnl),
-                            fontWeight: 900,
-                          }}
-                        >
-                          P&L {formatNumber(trade.pnl)}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '1fr 1fr',
-                          gap: 14,
-                          marginBottom: 14,
-                        }}
-                      >
-                        <AnnotationImage
-                          src={trade.beforeImage}
-                          title="Before Trade"
-                          annotations={trade.beforeAnnotations || []}
-                        />
-                        <AnnotationImage
-                          src={trade.afterImage}
-                          title="After Trade"
-                          annotations={trade.afterAnnotations || []}
-                        />
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '1fr 1fr',
-                          gap: 14,
-                          marginBottom: 14,
-                        }}
-                      >
-                        <div
-                          style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: 16,
-                            padding: 14,
-                          }}
-                        >
-                          <div
-                            style={{
-                              color: '#93c5fd',
-                              marginBottom: 8,
-                              fontWeight: 800,
-                            }}
-                          >
-                            Plan
-                          </div>
-                          <div style={{ color: '#e2e8f0' }}>
-                            {trade.replayPlan || 'No replay plan added.'}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: 16,
-                            padding: 14,
-                          }}
-                        >
-                          <div
-                            style={{
-                              color: '#f9a8d4',
-                              marginBottom: 8,
-                              fontWeight: 800,
-                            }}
-                          >
-                            Outcome
-                          </div>
-                          <div style={{ color: '#e2e8f0' }}>
-                            {trade.replayOutcome || 'No replay outcome added.'}
-                          </div>
-                        </div>
-                      </div>
-                      <div
-                        style={{
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: '20px',
                           background:
-                            'linear-gradient(135deg, rgba(124,58,237,0.16), rgba(236,72,153,0.14))',
-                          border: '1px solid rgba(236,72,153,0.18)',
-                          borderRadius: 16,
-                          padding: 14,
-                          marginBottom: 14,
+                            'linear-gradient(180deg, rgba(2,6,23,0.80), rgba(15,23,42,0.75))',
+                          padding: '18px',
                         }}
                       >
                         <div
                           style={{
-                            color: '#f5d0fe',
-                            marginBottom: 8,
-                            fontWeight: 800,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '10px',
+                            marginBottom: '14px',
                           }}
                         >
-                          AI Summary
+                          <div>
+                            <div style={{ fontSize: '22px', fontWeight: 900 }}>
+                              {trade.replayTitle || `${trade.pair} replay`}
+                            </div>
+                            <div style={{ color: '#cbd5e1', marginTop: '4px' }}>
+                              {trade.pair} • {trade.side} • {trade.strategy} •{' '}
+                              {trade.date}
+                            </div>
+                          </div>
+                          <div
+                            style={{
+                              color: pnlColor(trade.pnl),
+                              fontWeight: 900,
+                            }}
+                          >
+                            P&L {formatNumber(trade.pnl)}
+                          </div>
                         </div>
-                        <div style={{ color: '#fae8ff' }}>
-                          {trade.aiSummary || 'No AI summary generated yet.'}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          background: 'rgba(255,255,255,0.04)',
-                          borderRadius: 16,
-                          padding: 14,
-                        }}
-                      >
+
                         <div
                           style={{
-                            color: '#fcd34d',
-                            marginBottom: 8,
-                            fontWeight: 800,
+                            display: 'grid',
+                            gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                            gap: '14px',
+                            marginBottom: '14px',
                           }}
                         >
-                          Lesson
+                          <AnnotationImage
+                            src={trade.beforeImage}
+                            title="Before Trade"
+                            annotations={trade.beforeAnnotations || []}
+                          />
+                          <AnnotationImage
+                            src={trade.afterImage}
+                            title="After Trade"
+                            annotations={trade.afterAnnotations || []}
+                          />
                         </div>
-                        <div style={{ color: '#e2e8f0' }}>
-                          {trade.replayLesson || 'No replay lesson added.'}
+
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                            gap: '14px',
+                            marginBottom: '14px',
+                          }}
+                        >
+                          <div
+                            style={{
+                              background: 'rgba(255,255,255,0.04)',
+                              borderRadius: '16px',
+                              padding: '14px',
+                            }}
+                          >
+                            <div
+                              style={{
+                                color: '#93c5fd',
+                                marginBottom: '8px',
+                                fontWeight: 800,
+                              }}
+                            >
+                              Plan
+                            </div>
+                            <div style={{ color: '#e2e8f0' }}>
+                              {trade.replayPlan || 'No replay plan added.'}
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              background: 'rgba(255,255,255,0.04)',
+                              borderRadius: '16px',
+                              padding: '14px',
+                            }}
+                          >
+                            <div
+                              style={{
+                                color: '#f9a8d4',
+                                marginBottom: '8px',
+                                fontWeight: 800,
+                              }}
+                            >
+                              Outcome
+                            </div>
+                            <div style={{ color: '#e2e8f0' }}>
+                              {trade.replayOutcome ||
+                                'No replay outcome added.'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            background:
+                              'linear-gradient(135deg, rgba(124,58,237,0.16), rgba(236,72,153,0.14))',
+                            border: '1px solid rgba(236,72,153,0.18)',
+                            borderRadius: '16px',
+                            padding: '14px',
+                            marginBottom: '14px',
+                          }}
+                        >
+                          <div
+                            style={{
+                              color: '#f5d0fe',
+                              marginBottom: '8px',
+                              fontWeight: 800,
+                            }}
+                          >
+                            AI Summary
+                          </div>
+                          <div style={{ color: '#fae8ff' }}>
+                            {trade.aiSummary || 'No AI summary generated yet.'}
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            borderRadius: '16px',
+                            padding: '14px',
+                          }}
+                        >
+                          <div
+                            style={{
+                              color: '#fcd34d',
+                              marginBottom: '8px',
+                              fontWeight: 800,
+                            }}
+                          >
+                            Lesson
+                          </div>
+                          <div style={{ color: '#e2e8f0' }}>
+                            {trade.replayLesson || 'No replay lesson added.'}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {activePage === 'rules' && (
-              <div style={{ ...cardStyle(), padding: 20 }}>
+              <div style={{ ...cardStyle(), padding: '20px' }}>
                 <h2 style={{ marginTop: 0, color: '#fcd34d' }}>
                   Trading Rules
                 </h2>
                 <textarea
                   style={{
                     ...inputStyle(),
-                    minHeight: 260,
+                    minHeight: '260px',
                     resize: 'vertical',
                   }}
                   value={rulesText}
@@ -1748,36 +1884,35 @@ export default function App() {
               </div>
             )}
 
-            {(activePage === 'journal' || activePage === 'add') && (
-              <div style={{ ...cardStyle(), padding: 20 }}>
+            {activePage === 'journal' && (
+              <div style={{ ...cardStyle(), padding: '20px' }}>
                 <div
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    gap: 12,
+                    gap: '12px',
                     flexWrap: 'wrap',
-                    marginBottom: 18,
+                    marginBottom: '18px',
                   }}
                 >
                   <h2 style={{ margin: 0, color: '#93c5fd' }}>Trade Journal</h2>
                   <button
                     style={buttonStyle(true)}
-                    onClick={() => {
-                      resetForm();
-                      setShowAddModal(true);
-                    }}
+                    onClick={() => setShowAddModal(true)}
                   >
                     + Add Trade
                   </button>
                 </div>
+
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns:
-                      '1.2fr 150px 170px 170px 170px 150px 150px 130px',
-                    gap: 10,
-                    marginBottom: 18,
+                    gridTemplateColumns: mobile
+                      ? '1fr 1fr'
+                      : '1.2fr 150px 170px 170px 170px 150px 150px 130px',
+                    gap: '10px',
+                    marginBottom: '18px',
                   }}
                 >
                   <input
@@ -1851,7 +1986,7 @@ export default function App() {
                       ...inputStyle(),
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 8,
+                      gap: '8px',
                       cursor: 'pointer',
                     }}
                   >
@@ -1863,23 +1998,24 @@ export default function App() {
                     Favorites
                   </label>
                 </div>
-                <div style={{ display: 'grid', gap: 16 }}>
+
+                <div style={{ display: 'grid', gap: '16px' }}>
                   {filteredTrades.map((trade) => (
                     <div
                       key={trade.id}
                       style={{
                         border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: 20,
+                        borderRadius: '20px',
                         background:
                           'linear-gradient(180deg, rgba(2,6,23,0.80), rgba(15,23,42,0.75))',
-                        padding: 18,
+                        padding: '18px',
                       }}
                     >
                       <div
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
-                          gap: 16,
+                          gap: '16px',
                           alignItems: 'flex-start',
                           flexWrap: 'wrap',
                         }}
@@ -1888,13 +2024,13 @@ export default function App() {
                           <div
                             style={{
                               display: 'flex',
-                              gap: 10,
+                              gap: '10px',
                               flexWrap: 'wrap',
                               alignItems: 'center',
-                              marginBottom: 12,
+                              marginBottom: '12px',
                             }}
                           >
-                            <div style={{ fontSize: 22, fontWeight: 900 }}>
+                            <div style={{ fontSize: '22px', fontWeight: 900 }}>
                               {trade.isFavorite ? '★ ' : ''}
                               {trade.pair}
                             </div>
@@ -1925,6 +2061,14 @@ export default function App() {
                               {trade.date}
                             </span>
                             <span
+                              style={chipStyle(
+                                qualityGradient(trade.setupQuality),
+                                'white'
+                              )}
+                            >
+                              Setup {trade.setupQuality}
+                            </span>
+                            <span
                               style={{
                                 ...chipStyle('transparent'),
                                 color: pnlColor(trade.pnl),
@@ -1932,6 +2076,22 @@ export default function App() {
                               }}
                             >
                               P&L {formatNumber(trade.pnl)}
+                            </span>
+                            <span
+                              style={chipStyle(
+                                'rgba(245,158,11,0.18)',
+                                '#fde68a'
+                              )}
+                            >
+                              R:R {formatNumber(trade.rr || 0)}
+                            </span>
+                            <span
+                              style={chipStyle(
+                                'rgba(255,255,255,0.08)',
+                                '#e2e8f0'
+                              )}
+                            >
+                              Lot {trade.lotSize}
                             </span>
                             {(trade.beforeImage || trade.afterImage) && (
                               <span
@@ -1944,31 +2104,33 @@ export default function App() {
                               </span>
                             )}
                           </div>
+
                           <div
                             style={{
-                              padding: 14,
-                              borderRadius: 16,
+                              padding: '14px',
+                              borderRadius: '16px',
                               background: 'rgba(255,255,255,0.04)',
                               color: '#cbd5e1',
-                              marginBottom: 12,
+                              marginBottom: '12px',
                             }}
                           >
                             {trade.note || 'No notes added.'}
                           </div>
+
                           {trade.aiSummary && (
                             <div
                               style={{
                                 background:
                                   'linear-gradient(135deg, rgba(124,58,237,0.16), rgba(236,72,153,0.14))',
                                 border: '1px solid rgba(236,72,153,0.18)',
-                                borderRadius: 16,
-                                padding: 14,
+                                borderRadius: '16px',
+                                padding: '14px',
                               }}
                             >
                               <div
                                 style={{
                                   color: '#f5d0fe',
-                                  marginBottom: 8,
+                                  marginBottom: '8px',
                                   fontWeight: 800,
                                 }}
                               >
@@ -1980,8 +2142,13 @@ export default function App() {
                             </div>
                           )}
                         </div>
+
                         <div
-                          style={{ display: 'grid', gap: 10, minWidth: 120 }}
+                          style={{
+                            display: 'grid',
+                            gap: '10px',
+                            minWidth: '120px',
+                          }}
                         >
                           <button
                             style={buttonStyle(false)}
@@ -2015,6 +2182,20 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+
+                  {filteredTrades.length === 0 && (
+                    <div
+                      style={{
+                        padding: '24px',
+                        borderRadius: '18px',
+                        border: '1px dashed rgba(255,255,255,0.15)',
+                        color: '#cbd5e1',
+                        textAlign: 'center',
+                      }}
+                    >
+                      No trades found.
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2035,7 +2216,7 @@ export default function App() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: 20,
+            padding: '20px',
             zIndex: 50,
           }}
         >
@@ -2044,8 +2225,8 @@ export default function App() {
             style={{
               ...cardStyle(),
               width: '100%',
-              maxWidth: 1120,
-              padding: 24,
+              maxWidth: '1120px',
+              padding: '24px',
               maxHeight: '90vh',
               overflowY: 'auto',
             }}
@@ -2055,8 +2236,8 @@ export default function App() {
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                gap: 12,
-                marginBottom: 18,
+                gap: '12px',
+                marginBottom: '18px',
               }}
             >
               <h2 style={{ margin: 0, color: '#f5d0fe' }}>
@@ -2072,11 +2253,12 @@ export default function App() {
                 Close
               </button>
             </div>
+
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr',
-                gap: 12,
+                gridTemplateColumns: mobile ? '1fr' : '1fr 1fr 1fr',
+                gap: '12px',
               }}
             >
               <input
@@ -2108,6 +2290,7 @@ export default function App() {
                 <option value="Long">Long</option>
                 <option value="Short">Short</option>
               </select>
+
               <input
                 style={inputStyle()}
                 placeholder="Strategy"
@@ -2132,20 +2315,21 @@ export default function App() {
                   setForm((prev) => ({ ...prev, exit: e.target.value }))
                 }
               />
+
               <input
                 style={inputStyle()}
-                placeholder="P&L"
-                value={form.pnl}
+                placeholder="Lot Size"
+                value={form.lotSize}
                 onChange={(e) =>
-                  setForm((prev) => ({ ...prev, pnl: e.target.value }))
+                  setForm((prev) => ({ ...prev, lotSize: e.target.value }))
                 }
               />
               <input
                 style={inputStyle()}
-                placeholder="Tags (comma separated)"
-                value={form.tags}
+                placeholder="Risk:Reward"
+                value={form.rr}
                 onChange={(e) =>
-                  setForm((prev) => ({ ...prev, tags: e.target.value }))
+                  setForm((prev) => ({ ...prev, rr: e.target.value }))
                 }
               />
               <select
@@ -2164,14 +2348,26 @@ export default function App() {
                 <option value="C">C</option>
               </select>
             </div>
+
             <div
               style={{
-                marginTop: 12,
+                marginTop: '12px',
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 12,
+                gridTemplateColumns: mobile ? '1fr' : '1fr 1fr 1fr',
+                gap: '12px',
               }}
             >
+              <input
+                style={{
+                  ...inputStyle(),
+                  background: 'rgba(30,41,59,0.92)',
+                  color: '#86efac',
+                  fontWeight: 800,
+                }}
+                placeholder="P&L (auto)"
+                value={form.pnl}
+                readOnly
+              />
               <input
                 style={inputStyle()}
                 placeholder="Mistake"
@@ -2180,12 +2376,23 @@ export default function App() {
                   setForm((prev) => ({ ...prev, mistake: e.target.value }))
                 }
               />
+              <input
+                style={inputStyle()}
+                placeholder="Tags (comma separated)"
+                value={form.tags}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, tags: e.target.value }))
+                }
+              />
+            </div>
+
+            <div style={{ marginTop: '12px' }}>
               <label
                 style={{
                   ...inputStyle(),
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 10,
+                  gap: '10px',
                   cursor: 'pointer',
                 }}
               >
@@ -2202,9 +2409,14 @@ export default function App() {
                 Mark as favorite trade
               </label>
             </div>
-            <div style={{ marginTop: 12 }}>
+
+            <div style={{ marginTop: '12px' }}>
               <textarea
-                style={{ ...inputStyle(), minHeight: 90, resize: 'vertical' }}
+                style={{
+                  ...inputStyle(),
+                  minHeight: '90px',
+                  resize: 'vertical',
+                }}
                 placeholder="Trade notes"
                 value={form.note}
                 onChange={(e) =>
@@ -2212,12 +2424,13 @@ export default function App() {
                 }
               />
             </div>
+
             <div
               style={{
-                marginTop: 18,
+                marginTop: '18px',
                 border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 20,
-                padding: 16,
+                borderRadius: '20px',
+                padding: '16px',
                 background:
                   'linear-gradient(135deg, rgba(255,255,255,0.03), rgba(139,92,246,0.04), rgba(236,72,153,0.03))',
               }}
@@ -2227,23 +2440,28 @@ export default function App() {
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  gap: 12,
+                  gap: '12px',
                   flexWrap: 'wrap',
-                  marginBottom: 14,
+                  marginBottom: '14px',
                 }}
               >
                 <div>
                   <div
-                    style={{ fontSize: 18, fontWeight: 900, color: '#f5d0fe' }}
+                    style={{
+                      fontSize: '18px',
+                      fontWeight: 900,
+                      color: '#f5d0fe',
+                    }}
                   >
                     Before / After Replay
                   </div>
-                  <div style={{ color: '#cbd5e1', fontSize: 14 }}>
-                    Upload screenshots, click on them to add annotation markers,
-                    then generate replay notes and AI summary.
+                  <div style={{ color: '#cbd5e1', fontSize: '14px' }}>
+                    Upload screenshots, add annotation markers, create replay
+                    notes, and generate AI summary.
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                   <button style={buttonStyle(false)} onClick={autoFillReplay}>
                     Auto-create replay notes
                   </button>
@@ -2255,18 +2473,19 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 14,
-                  marginBottom: 14,
+                  gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                  gap: '14px',
+                  marginBottom: '14px',
                 }}
               >
                 <div>
                   <div
                     style={{
-                      marginBottom: 8,
+                      marginBottom: '8px',
                       color: '#93c5fd',
                       fontWeight: 700,
                     }}
@@ -2282,7 +2501,7 @@ export default function App() {
                 <div>
                   <div
                     style={{
-                      marginBottom: 8,
+                      marginBottom: '8px',
                       color: '#f9a8d4',
                       fontWeight: 700,
                     }}
@@ -2296,12 +2515,13 @@ export default function App() {
                   />
                 </div>
               </div>
+
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 14,
-                  marginBottom: 14,
+                  gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                  gap: '14px',
+                  marginBottom: '14px',
                 }}
               >
                 <AnnotationImage
@@ -2317,31 +2537,32 @@ export default function App() {
                   onAdd={(x, y) => addAnnotation('afterAnnotations', x, y)}
                 />
               </div>
+
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 14,
-                  marginBottom: 14,
+                  gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                  gap: '14px',
+                  marginBottom: '14px',
                 }}
               >
                 <div
                   style={{
                     background: 'rgba(255,255,255,0.04)',
-                    borderRadius: 16,
-                    padding: 14,
+                    borderRadius: '16px',
+                    padding: '14px',
                   }}
                 >
                   <div
                     style={{
                       color: '#93c5fd',
-                      marginBottom: 10,
+                      marginBottom: '10px',
                       fontWeight: 800,
                     }}
                   >
                     Before annotations
                   </div>
-                  <div style={{ display: 'grid', gap: 8 }}>
+                  <div style={{ display: 'grid', gap: '8px' }}>
                     {form.beforeAnnotations.length === 0 && (
                       <div style={{ color: '#94a3b8' }}>No markers yet.</div>
                     )}
@@ -2351,14 +2572,14 @@ export default function App() {
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
-                          gap: 10,
+                          gap: '10px',
                           alignItems: 'center',
                           background: 'rgba(2,6,23,0.55)',
-                          borderRadius: 10,
+                          borderRadius: '10px',
                           padding: '8px 10px',
                         }}
                       >
-                        <div style={{ color: '#e2e8f0', fontSize: 13 }}>
+                        <div style={{ color: '#e2e8f0', fontSize: '13px' }}>
                           {index + 1}. {item.text || 'Untitled marker'}
                         </div>
                         <button
@@ -2373,23 +2594,24 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+
                 <div
                   style={{
                     background: 'rgba(255,255,255,0.04)',
-                    borderRadius: 16,
-                    padding: 14,
+                    borderRadius: '16px',
+                    padding: '14px',
                   }}
                 >
                   <div
                     style={{
                       color: '#f9a8d4',
-                      marginBottom: 10,
+                      marginBottom: '10px',
                       fontWeight: 800,
                     }}
                   >
                     After annotations
                   </div>
-                  <div style={{ display: 'grid', gap: 8 }}>
+                  <div style={{ display: 'grid', gap: '8px' }}>
                     {form.afterAnnotations.length === 0 && (
                       <div style={{ color: '#94a3b8' }}>No markers yet.</div>
                     )}
@@ -2399,14 +2621,14 @@ export default function App() {
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
-                          gap: 10,
+                          gap: '10px',
                           alignItems: 'center',
                           background: 'rgba(2,6,23,0.55)',
-                          borderRadius: 10,
+                          borderRadius: '10px',
                           padding: '8px 10px',
                         }}
                       >
-                        <div style={{ color: '#e2e8f0', fontSize: 13 }}>
+                        <div style={{ color: '#e2e8f0', fontSize: '13px' }}>
                           {index + 1}. {item.text || 'Untitled marker'}
                         </div>
                         <button
@@ -2422,8 +2644,13 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
               <div
-                style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr',
+                  gap: '12px',
+                }}
               >
                 <input
                   style={inputStyle()}
@@ -2437,7 +2664,11 @@ export default function App() {
                   }
                 />
                 <textarea
-                  style={{ ...inputStyle(), minHeight: 90, resize: 'vertical' }}
+                  style={{
+                    ...inputStyle(),
+                    minHeight: '90px',
+                    resize: 'vertical',
+                  }}
                   placeholder="Original trade plan"
                   value={form.replayPlan}
                   onChange={(e) =>
@@ -2445,7 +2676,11 @@ export default function App() {
                   }
                 />
                 <textarea
-                  style={{ ...inputStyle(), minHeight: 90, resize: 'vertical' }}
+                  style={{
+                    ...inputStyle(),
+                    minHeight: '90px',
+                    resize: 'vertical',
+                  }}
                   placeholder="What actually happened"
                   value={form.replayOutcome}
                   onChange={(e) =>
@@ -2456,7 +2691,11 @@ export default function App() {
                   }
                 />
                 <textarea
-                  style={{ ...inputStyle(), minHeight: 90, resize: 'vertical' }}
+                  style={{
+                    ...inputStyle(),
+                    minHeight: '90px',
+                    resize: 'vertical',
+                  }}
                   placeholder="Lesson learned"
                   value={form.replayLesson}
                   onChange={(e) =>
@@ -2469,7 +2708,7 @@ export default function App() {
                 <textarea
                   style={{
                     ...inputStyle(),
-                    minHeight: 100,
+                    minHeight: '100px',
                     resize: 'vertical',
                     border: '1px solid rgba(236,72,153,0.18)',
                     background:
@@ -2483,12 +2722,14 @@ export default function App() {
                 />
               </div>
             </div>
+
             <div
               style={{
                 display: 'flex',
-                gap: 12,
+                gap: '12px',
                 justifyContent: 'flex-end',
-                marginTop: 18,
+                marginTop: '18px',
+                flexWrap: 'wrap',
               }}
             >
               <button
@@ -2517,23 +2758,27 @@ export default function App() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: 20,
+            padding: '20px',
             zIndex: 60,
           }}
         >
           <div
             style={{
               ...cardStyle(),
-              maxWidth: 420,
+              maxWidth: '420px',
               width: '100%',
-              padding: 24,
+              padding: '24px',
             }}
           >
             <h3 style={{ marginTop: 0, color: '#f5d0fe' }}>
               Delete this trade?
             </h3>
             <div
-              style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '12px',
+              }}
             >
               <button
                 style={buttonStyle(false)}
